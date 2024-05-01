@@ -192,3 +192,60 @@ BEGIN
     END;
 END;
 GO
+
+-- Trigger to check if a product already exists and update its quantity if so
+CREATE TRIGGER trg_CheckExistingProduct
+ON Goods
+INSTEAD OF INSERT
+AS
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM inserted i
+        JOIN Goods g ON i.Name = g.Name AND i.Type = g.Type AND i.Manufacturer = g.Manufacturer
+    )
+    BEGIN
+        UPDATE g
+        SET g.Quantity = g.Quantity + i.Quantity
+        FROM Goods g
+        JOIN inserted i ON i.Name = g.Name AND i.Type = g.Type AND i.Manufacturer = g.Manufacturer;
+    END
+    ELSE
+    BEGIN
+        INSERT INTO Goods (Name, Type, Quantity, CostPrice, Manufacturer, SalePrice)
+        SELECT Name, Type, Quantity, CostPrice, Manufacturer, SalePrice
+        FROM inserted;
+    END
+END;
+GO
+
+-- Trigger to transfer information about a dismissed employee to the "ArchiveEmployees" table
+CREATE TRIGGER trg_TransferToArchiveEmployees
+ON Employees
+AFTER DELETE
+AS
+BEGIN
+    INSERT INTO ArchiveEmployees (FullName, Position, EmploymentDate, Gender, Salary)
+    SELECT FullName, Position, EmploymentDate, Gender, Salary
+    FROM deleted;
+END;
+GO
+
+-- Trigger to prevent adding a new seller if the number of existing sellers exceeds 6
+CREATE TRIGGER trg_PreventAddingSeller
+ON Employees
+INSTEAD OF INSERT
+AS
+BEGIN
+    IF (SELECT COUNT(*) FROM Employees WHERE Position = 'Seller') >= 6
+    BEGIN
+        RAISERROR ('Adding a new seller is prohibited. Maximum seller limit reached.', 16, 1);
+    END
+    ELSE
+    BEGIN
+        INSERT INTO Employees (FullName, Position, EmploymentDate, Gender, Salary)
+        SELECT FullName, Position, EmploymentDate, Gender, Salary
+        FROM inserted;
+    END
+END;
+GO
