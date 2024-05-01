@@ -45,3 +45,150 @@ CREATE TABLE Sales (
     FOREIGN KEY (SellerID) REFERENCES Employees(EmployeeID),
     FOREIGN KEY (BuyerID) REFERENCES Customers(CustomerID)
 );
+
+
+-- Trigger to insert information about the sale into the History table
+CREATE TRIGGER trg_InsertSaleHistory
+ON Sales
+AFTER INSERT
+AS
+BEGIN
+    INSERT INTO History (SaleID, GoodsID, SalePrice, Quantity, SaleDate, SellerID, BuyerID)
+    SELECT SaleID, GoodsID, SalePrice, Quantity, SaleDate, SellerID, BuyerID
+    FROM inserted;
+END;
+GO
+
+-- Trigger to transfer fully sold goods to the Archive table
+CREATE TRIGGER trg_TransferToArchive
+ON Sales
+AFTER DELETE
+AS
+BEGIN
+    INSERT INTO Archive (GoodsID, SalePrice, Quantity, SaleDate, SellerID, BuyerID)
+    SELECT GoodsID, SalePrice, Quantity, SaleDate, SellerID, BuyerID
+    FROM deleted
+    WHERE NOT EXISTS (
+        SELECT 1
+        FROM Goods
+        WHERE Goods.GoodsID = deleted.GoodsID
+    );
+END;
+GO
+
+-- Trigger to check for existing customers before insertion
+CREATE TRIGGER trg_CheckExistingCustomer
+ON Customers
+INSTEAD OF INSERT
+AS
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM Customers c
+        JOIN inserted i ON c.Name = i.Name OR c.Email = i.Email
+    )
+    BEGIN
+        RAISERROR ('Existing customer. Insertion aborted.', 16, 1);
+    END
+    ELSE
+    BEGIN
+        INSERT INTO Customers (Name, Email, ContactPhone, Gender, OrderHistory, DiscountPercentage, SignedForMailing)
+        SELECT Name, Email, ContactPhone, Gender, OrderHistory, DiscountPercentage, SignedForMailing
+        FROM inserted;
+    END
+END;
+GO
+
+-- Trigger to prevent deletion of existing customers
+CREATE TRIGGER trg_PreventCustomerDeletion
+ON Customers
+INSTEAD OF DELETE
+AS
+BEGIN
+    RAISERROR ('Deleting existing customers is prohibited.', 16, 1);
+END;
+GO
+
+-- Trigger to prevent deletion of employees hired before 2015
+CREATE TRIGGER trg_PreventEmployeeDeletion
+ON Employees
+INSTEAD OF DELETE
+AS
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM deleted
+        WHERE EmploymentDate < '2015-01-01'
+    )
+    BEGIN
+        RAISERROR ('Deleting employees hired before 2015 is prohibited.', 16, 1);
+    END
+    ELSE
+    BEGIN
+        DELETE FROM Employees WHERE EmployeeID IN (SELECT EmployeeID FROM deleted);
+    END
+END;
+GO
+
+-- Trigger to set discount percentage for customers with purchase amount exceeding UAH 50,000
+CREATE TRIGGER trg_SetDiscountForHighPurchase
+ON Sales
+AFTER INSERT
+AS
+BEGIN
+    DECLARE @TotalPurchase DECIMAL(10, 2);
+    SELECT @TotalPurchase = SUM(SalePrice * Quantity)
+    FROM Sales
+    WHERE BuyerID IN (SELECT BuyerID FROM inserted);
+
+    IF @TotalPurchase > 50000
+    BEGIN
+        UPDATE Customers
+        SET DiscountPercentage = 15
+        WHERE CustomerID IN (SELECT BuyerID FROM inserted);
+    END;
+END;
+GO
+
+-- Trigger to prohibit addition of goods from a particular company
+CREATE TRIGGER trg_ProhibitGoodsFromSpecificCompany
+ON Goods
+INSTEAD OF INSERT
+AS
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM inserted
+        WHERE Manufacturer = 'Sport, Sun and Barbell'
+    )
+    BEGIN
+        RAISERROR ('Adding goods from Sport, Sun and Barbell is prohibited.', 16, 1);
+    END
+    ELSE
+    BEGIN
+        INSERT INTO Goods (Name, Type, Quantity, CostPrice, Manufacturer, SalePrice)
+        SELECT Name, Type, Quantity, CostPrice, Manufacturer, SalePrice
+        FROM inserted;
+    END
+END;
+GO
+
+-- Trigger to insert information about the last unit of a product
+CREATE TRIGGER trg_LastUnit
+ON Sales
+AFTER INSERT
+AS
+BEGIN
+    DECLARE @LastUnit INT;
+    SELECT @LastUnit = Quantity
+    FROM inserted
+    WHERE Quantity = 1;
+
+    IF @LastUnit = 1
+    BEGIN
+        INSERT INTO LastUnit (GoodsID, SalePrice, SaleDate)
+        SELECT GoodsID, SalePrice, SaleDate
+        FROM inserted;
+    END;
+END;
+GO
